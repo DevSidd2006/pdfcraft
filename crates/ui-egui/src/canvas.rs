@@ -2055,7 +2055,17 @@ fn annotation_hover_text(a: &pdfcraft_render::Annotation) -> Option<String> {
     }
     let who = a.author.clone().unwrap_or_else(|| a.subtype.clone());
     let body = a.contents.clone().unwrap_or_default();
-    Some(if body.is_empty() { who } else { format!("{who}\n{body}") })
+    if is_text_markup(&a.subtype) && !body.trim().is_empty() {
+        Some(body)
+    } else if body.is_empty() {
+        Some(who)
+    } else {
+        Some(format!("{who}\n{body}"))
+    }
+}
+
+fn is_text_markup(subtype: &str) -> bool {
+    matches!(subtype, "Highlight" | "Underline" | "StrikeOut" | "Squiggly")
 }
 
 /// The scroll offset that puts `point` (content coordinates) at `rel` in the viewport, kept within
@@ -4154,7 +4164,7 @@ fn selection_actions(
     view.clear_selection();
     match action {
         SelectionAction::Note | SelectionAction::Replace => {
-            if matches!(action, SelectionAction::Replace) {
+            if matches!(action, SelectionAction::Replace | SelectionAction::Note) {
                 view.comments.replace = Some(quads);
             }
             view.comments.composer = Some(comments::Composer {

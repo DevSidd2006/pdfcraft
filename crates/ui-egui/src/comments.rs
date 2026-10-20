@@ -1196,6 +1196,18 @@ pub(crate) fn page_after_text(resp: &egui::Response, cx: &PageCx<'_>, view: &mut
 pub(crate) fn paint_page(ui: &egui::Ui, painter: &egui::Painter, cx: &PageCx<'_>, view: &DocView) {
     let cv = &view.comments;
     let pointer = ui.input(|i| i.pointer.hover_pos());
+    // A highlighted comment keeps the text anchor in its quads. Add a small
+    // viewer-only marker so it is distinguishable from a plain highlight.
+    for a in cx.comments().filter(|a| is_markup(&a.subtype) && a.contents.as_deref().is_some_and(|s| !s.trim().is_empty())) {
+        if let Some(r) = cx.screen_rects(a).last().copied() {
+            let marker = Rect::from_min_size(pos2(r.right() + 3.0, r.top() - 14.0), vec2(12.0, 12.0));
+            painter.line_segment(
+                [marker.left_bottom(), pos2(r.right(), r.top())],
+                Stroke::new(1.0, Color32::from_rgba_unmultiplied(0xD4, 0x8A, 0x00, 150)),
+            );
+            icons::paint(ui, marker, "message-square", 12.0, Color32::from_rgb(0xD4, 0x8A, 0x00));
+        }
+    }
     // A redaction mark shows its fill while the pointer is over it, as Acrobat's does, so the
     // marked area reads before anything is applied.
     if cv.gesture.is_none()
@@ -1430,6 +1442,9 @@ pub(crate) fn composer(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, 
         });
     });
     if cancel {
+        if matches!(c.kind, ComposerKind::Note) {
+            view.comments.replace = None;
+        }
         view.comments.composer = None;
         return None;
     }
@@ -1442,7 +1457,16 @@ pub(crate) fn composer(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, 
         ComposerKind::Edit(index) => Some(Edit::SetAnnotationContents { page, index, text }),
         ComposerKind::Note => {
             view.comments.tool_done = true;
-            Some(new_comment(&cx, CommentTool::Note, Shape::Note { at: c.at, icon: NoteIcon::Comment }, text))
+            if let Some(quads) = view.comments.replace.take() {
+                Some(new_comment(
+                    &cx,
+                    CommentTool::Highlight,
+                    Shape::TextMarkup { kind: Markup::Highlight, quads },
+                    text,
+                ))
+            } else {
+                Some(new_comment(&cx, CommentTool::Note, Shape::Note { at: c.at, icon: NoteIcon::Comment }, text))
+            }
         }
         ComposerKind::TextBox => {
             view.comments.tool_done = true;
