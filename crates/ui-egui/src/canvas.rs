@@ -3523,8 +3523,9 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
                 let gesturing = view.comments.gesture.is_some() || freehand;
                 for a in info.annotations.iter().filter(|a| a.page == i && !gesturing) {
                     let sr = xf.user_rect(info, i, a.rect);
+                    let marker = pcx.comment_marker_rect(a);
                     let hidden = prefs.hide_empty_highlight_hover && a.subtype == "Highlight" && a.contents.as_deref().is_none_or(str::is_empty);
-                    if sr.contains(p)
+                    if (sr.contains(p) || marker.is_some_and(|r| r.contains(p)))
                         && hover_text.is_none()
                         && !hidden
                         && let Some(text) = annotation_hover_text(a)

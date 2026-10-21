@@ -605,6 +605,14 @@ impl PageCx<'_> {
         }
     }
 
+    pub(crate) fn comment_marker_rect(&self, a: &Annotation) -> Option<Rect> {
+        if !is_markup(&a.subtype) || a.contents.as_deref().is_none_or(|s| s.trim().is_empty()) {
+            return None;
+        }
+        let r = self.screen_rects(a).last().copied()?;
+        Some(Rect::from_min_size(pos2(r.right() + 3.0, r.top() - 14.0), vec2(12.0, 12.0)))
+    }
+
     /// A redaction mark's areas: one per marked quad, or its rectangle.
     fn redact_rects(&self, a: &Annotation) -> Vec<Rect> {
         if a.quads.is_empty() {
@@ -624,7 +632,12 @@ impl PageCx<'_> {
 
     /// The topmost comment under `p`.
     fn hit(&self, p: Pos2) -> Option<&Annotation> {
-        self.comments().filter(|a| self.screen_rects(a).iter().any(|r| r.expand(3.0).contains(p))).last()
+        self.comments()
+            .filter(|a| {
+                self.screen_rects(a).iter().any(|r| r.expand(3.0).contains(p))
+                    || self.comment_marker_rect(a).is_some_and(|r| r.expand(3.0).contains(p))
+            })
+            .last()
     }
 
     pub(crate) fn get(&self, index: usize) -> Option<&Annotation> {
@@ -1199,10 +1212,11 @@ pub(crate) fn paint_page(ui: &egui::Ui, painter: &egui::Painter, cx: &PageCx<'_>
     // A highlighted comment keeps the text anchor in its quads. Add a small
     // viewer-only marker so it is distinguishable from a plain highlight.
     for a in cx.comments().filter(|a| is_markup(&a.subtype) && a.contents.as_deref().is_some_and(|s| !s.trim().is_empty())) {
-        if let Some(r) = cx.screen_rects(a).last().copied() {
-            let marker = Rect::from_min_size(pos2(r.right() + 3.0, r.top() - 14.0), vec2(12.0, 12.0));
+        if let Some(marker) = cx.comment_marker_rect(a)
+            && let Some(target) = cx.screen_rects(a).last().copied()
+        {
             painter.line_segment(
-                [marker.left_bottom(), pos2(r.right(), r.top())],
+                [marker.left_bottom(), pos2(target.right(), target.top())],
                 Stroke::new(1.0, Color32::from_rgba_unmultiplied(0xD4, 0x8A, 0x00, 150)),
             );
             icons::paint(ui, marker, "message-square", 12.0, Color32::from_rgb(0xD4, 0x8A, 0x00));
@@ -1458,12 +1472,7 @@ pub(crate) fn composer(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, 
         ComposerKind::Note => {
             view.comments.tool_done = true;
             if let Some(quads) = view.comments.replace.take() {
-                Some(new_comment(
-                    &cx,
-                    CommentTool::Highlight,
-                    Shape::TextMarkup { kind: Markup::Highlight, quads },
-                    text,
-                ))
+                Some(new_comment(&cx, CommentTool::Highlight, Shape::TextMarkup { kind: Markup::Highlight, quads }, text))
             } else {
                 Some(new_comment(&cx, CommentTool::Note, Shape::Note { at: c.at, icon: NoteIcon::Comment }, text))
             }
