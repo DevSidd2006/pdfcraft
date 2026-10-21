@@ -387,9 +387,13 @@ pub enum Gesture {
     Resize { page: usize, index: usize, handle: (i8, i8), from: Pos2, aspect_ratio: Option<f32> },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ComposerKind {
     Note,
+    /// A comment anchored to selected text; replacing the composer drops its quads.
+    TextNote {
+        quads: Vec<[f64; 8]>,
+    },
     TextBox,
     /// A callout whose arrow touches `point`; the composer's anchor is the text box's top-left.
     Callout {
@@ -1402,7 +1406,7 @@ pub(crate) fn composer(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, 
     let mut cancel = false;
     let c = view.comments.composer.as_mut()?;
     let title = match c.kind {
-        ComposerKind::Note => "Sticky note",
+        ComposerKind::Note | ComposerKind::TextNote { .. } => "Sticky note",
         ComposerKind::TextBox => "Text box",
         ComposerKind::Callout { .. } => "Callout",
         ComposerKind::Caret { .. } => "Inserted text",
@@ -1456,9 +1460,6 @@ pub(crate) fn composer(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, 
         });
     });
     if cancel {
-        if matches!(c.kind, ComposerKind::Note) {
-            view.comments.replace = None;
-        }
         view.comments.composer = None;
         return None;
     }
@@ -1471,11 +1472,11 @@ pub(crate) fn composer(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, 
         ComposerKind::Edit(index) => Some(Edit::SetAnnotationContents { page, index, text }),
         ComposerKind::Note => {
             view.comments.tool_done = true;
-            if let Some(quads) = view.comments.replace.take() {
-                Some(new_comment(&cx, CommentTool::Highlight, Shape::TextMarkup { kind: Markup::Highlight, quads }, text))
-            } else {
-                Some(new_comment(&cx, CommentTool::Note, Shape::Note { at: c.at, icon: NoteIcon::Comment }, text))
-            }
+            Some(new_comment(&cx, CommentTool::Note, Shape::Note { at: c.at, icon: NoteIcon::Comment }, text))
+        }
+        ComposerKind::TextNote { quads } => {
+            view.comments.tool_done = true;
+            Some(new_comment(&cx, CommentTool::Highlight, Shape::TextMarkup { kind: Markup::Highlight, quads }, text))
         }
         ComposerKind::TextBox => {
             view.comments.tool_done = true;
