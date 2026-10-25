@@ -395,19 +395,15 @@ pub enum Gesture {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ComposerKind {
     Note,
-<<<<<<< HEAD
     /// A comment anchored to selected text; replacing the composer drops its quads.
     TextNote {
         quads: Vec<[f64; 8]>,
     },
-    TextBox,
-=======
     /// A text box; `size` is the box dragged out (displayed width and height, in user space
     /// units), `None` after a click: then the box fits its text.
     TextBox {
         size: Option<[f64; 2]>,
     },
->>>>>>> 71b47b519d2c295c2068dc89a8d75690fc7dd7e5
     /// A callout whose arrow touches `point`; the composer's anchor is the text box's top-left.
     Callout {
         point: [f64; 2],
@@ -664,7 +660,7 @@ impl PageCx<'_> {
         if !is_markup(&a.subtype) || a.contents.as_deref().is_none_or(|s| s.trim().is_empty()) {
             return None;
         }
-        let r = self.screen_rects(a).last().copied()?;
+        let r = self.screen_rects(a).last()?;
         Some(Rect::from_min_size(pos2(r.right() + 3.0, r.top() - 14.0), vec2(12.0, 12.0)))
     }
 
@@ -687,16 +683,11 @@ impl PageCx<'_> {
 
     /// The topmost comment under `p`.
     fn hit(&self, p: Pos2) -> Option<&Annotation> {
-<<<<<<< HEAD
         self.comments()
             .filter(|a| {
-                self.screen_rects(a).iter().any(|r| r.expand(3.0).contains(p))
-                    || self.comment_marker_rect(a).is_some_and(|r| r.expand(3.0).contains(p))
+                self.screen_rects(a).any(|r| r.expand(3.0).contains(p)) || self.comment_marker_rect(a).is_some_and(|r| r.expand(3.0).contains(p))
             })
             .last()
-=======
-        self.comments().filter(|a| self.screen_rects(a).any(|r| r.expand(3.0).contains(p))).last()
->>>>>>> 71b47b519d2c295c2068dc89a8d75690fc7dd7e5
     }
 
     pub(crate) fn get(&self, index: usize) -> Option<&Annotation> {
@@ -1346,13 +1337,11 @@ pub(crate) fn page_after_text(resp: &egui::Response, cx: &PageCx<'_>, view: &mut
 /// Paint comment selection, hover and gesture previews on a page.
 pub(crate) fn paint_page(ui: &egui::Ui, painter: &egui::Painter, cx: &PageCx<'_>, view: &DocView) {
     let cv = &view.comments;
-<<<<<<< HEAD
-    let pointer = ui.input(|i| i.pointer.hover_pos());
     // A highlighted comment keeps the text anchor in its quads. Add a small
     // viewer-only marker so it is distinguishable from a plain highlight.
     for a in cx.comments().filter(|a| is_markup(&a.subtype) && a.contents.as_deref().is_some_and(|s| !s.trim().is_empty())) {
         if let Some(marker) = cx.comment_marker_rect(a)
-            && let Some(target) = cx.screen_rects(a).last().copied()
+            && let Some(target) = cx.screen_rects(a).last()
         {
             painter.line_segment(
                 [marker.left_bottom(), pos2(target.right(), target.top())],
@@ -1361,9 +1350,7 @@ pub(crate) fn paint_page(ui: &egui::Ui, painter: &egui::Painter, cx: &PageCx<'_>
             icons::paint(ui, marker, "message-square", 12.0, Color32::from_rgb(0xD4, 0x8A, 0x00));
         }
     }
-=======
     let pointer = cx.ptr.pos;
->>>>>>> 71b47b519d2c295c2068dc89a8d75690fc7dd7e5
     // A redaction mark shows its fill while the pointer is over it, as Acrobat's does, so the
     // marked area reads before anything is applied.
     if cv.gesture.is_none()
@@ -1643,13 +1630,8 @@ pub(crate) fn composer(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, 
     let mut cancel = false;
     let c = view.comments.composer.as_mut()?;
     let title = match c.kind {
-<<<<<<< HEAD
         ComposerKind::Note | ComposerKind::TextNote { .. } => "Sticky note",
-        ComposerKind::TextBox => "Text box",
-=======
-        ComposerKind::Note => "Sticky note",
         ComposerKind::TextBox { .. } => "Text box",
->>>>>>> 71b47b519d2c295c2068dc89a8d75690fc7dd7e5
         ComposerKind::Callout { .. } => "Callout",
         ComposerKind::Caret { .. } => "Inserted text",
         ComposerKind::Replace => "Replacement text",
@@ -1729,15 +1711,11 @@ pub(crate) fn composer(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, 
             view.comments.tool_done = true;
             Some(new_comment(&cx, CommentTool::Note, Shape::Note { at: c.at, icon: NoteIcon::Comment }, text))
         }
-<<<<<<< HEAD
         ComposerKind::TextNote { quads } => {
             view.comments.tool_done = true;
             Some(new_comment(&cx, CommentTool::Highlight, Shape::TextMarkup { kind: Markup::Highlight, quads }, text))
         }
-        ComposerKind::TextBox => {
-=======
         ComposerKind::TextBox { size } => {
->>>>>>> 71b47b519d2c295c2068dc89a8d75690fc7dd7e5
             view.comments.tool_done = true;
             let rotation = page_rotation(info, page);
             let border = prefs.style(CommentTool::TextBox).width;
