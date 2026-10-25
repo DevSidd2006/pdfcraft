@@ -557,6 +557,8 @@ fn selected_text_comment_action_opens_note_composer() {
         h.state().views[0].comments.composer.as_ref().map(|c| &c.kind),
         Some(pdfcraft_ui_egui::comments::ComposerKind::TextNote { .. })
     ));
+    h.get_by_label("Add comment");
+    assert!(h.query_by_label("Sticky note").is_none());
     assert!(h.state().views[0].selected_text().is_none());
 }
 
@@ -584,7 +586,8 @@ fn selection_note_replaced_by_sticky_note_posts_at_the_new_anchor() {
 }
 
 #[test]
-fn selection_note_posts_highlight_and_hovers_only_comment_text() {
+fn selection_note_posts_highlight_and_hovers_author_and_comment() {
+    let _gpu = std::env::var_os("PDFCRAFT_SHOTS").map(|_| crate::gpu());
     let mut h = harness(|_| {});
     h.state_mut().views[0].select_text(0, 4, 8);
     let selected = h.state().views[0].selected_text().unwrap();
@@ -595,24 +598,27 @@ fn selection_note_posts_highlight_and_hovers_only_comment_text() {
     h.run_steps(2);
     h.get_by_label("Post").click();
     h.run_steps(3);
-    settle(&mut h);
+    crate::support::settle(&mut h);
     let c = comments(&h);
     assert_eq!(c.len(), 1);
     assert_eq!(c[0].subtype, "Highlight");
     assert_eq!(c[0].contents.as_deref(), Some("Check these words"));
     assert!(!c[0].quads.is_empty());
+    let hover = format!("{}\nCheck these words", c[0].author.as_deref().expect("comment has an author"));
     h.state_mut().set_option("panel", "none").unwrap();
     h.state_mut().views[0].comments.selected = None;
     h.hover_at(pos2(0.0, 0.0));
     h.run_steps(3);
-    assert!(h.query_by_label("Check these words").is_none());
+    assert!(h.query_by_label(&hover).is_none());
     let r = c[0].rect;
     let p = at(&h, (r[0] + r[2]) / 2.0, (r[1] + r[3]) / 2.0);
     h.hover_at(p);
     h.run_steps(3);
-    h.get_by_label("Check these words");
-    assert!(h.query_by_label_contains("Tester").is_none(), "hover omits the author");
+    h.get_by_label(&hover);
     assert!(h.query_by_label_contains(&selected).is_none(), "hover omits the selected text");
+    if let Ok(dir) = std::env::var("PDFCRAFT_SHOTS") {
+        h.render().unwrap().save(format!("{dir}/selection-comment-hover.png")).unwrap();
+    }
 }
 
 #[test]
@@ -2423,6 +2429,36 @@ fn hover_markup_at(h: &mut Harness<'static, PdfCraftApp>, x: f32, y: f32) {
     };
     h.hover_at(p);
     h.run_steps(3);
+}
+
+#[test]
+fn imported_commented_markup_keeps_author_at_rotated_zoomed_page_edges() {
+    let _gpu = std::env::var_os("PDFCRAFT_SHOTS").map(|_| crate::gpu());
+    for subtype in ["Highlight", "Underline", "StrikeOut", "Squiggly"] {
+        for (page_rotation, view_rotation) in [(0, 0), (90, 0), (0, 90), (90, 90)] {
+            for zoom in ["50", "125"] {
+                let pdf = String::from_utf8(markup_hover_fixture(subtype, page_rotation, "", ""))
+                    .unwrap()
+                    .replace("/Rect [20 105 250 165]", "/Rect [270 180 300 200]")
+                    .replace(
+                        "/QuadPoints [120 165 250 165 120 145 250 145 20 125 100 125 20 105 100 105]",
+                        "/QuadPoints [270 200 300 200 270 180 300 180]",
+                    );
+                let mut h = markup_hover_harness(pdf.into_bytes(), view_rotation);
+                h.state_mut().set_option("zoom", zoom).unwrap();
+                h.run_steps(4);
+                support::settle(&mut h);
+                hover_markup_at(&mut h, 285.0, 190.0);
+                h.get_by_label("Ada\nFirst multiline comment");
+                if subtype == "Highlight"
+                    && matches!((page_rotation, view_rotation, zoom), (0, 0, "50") | (90, 90, "125"))
+                    && let Ok(dir) = std::env::var("PDFCRAFT_SHOTS")
+                {
+                    h.render().unwrap().save(format!("{dir}/edge-comment-{page_rotation}-{view_rotation}-{zoom}.png")).unwrap();
+                }
+            }
+        }
+    }
 }
 
 #[test]

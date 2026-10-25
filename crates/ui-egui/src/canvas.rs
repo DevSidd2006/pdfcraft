@@ -2371,25 +2371,15 @@ impl DocView {
     }
 }
 
-/// The hover popup for an annotation. Replies and Fill & Sign marks (typed text, checks, signatures)
-/// show none: they are page content being edited, not comments.
+/// The hover popup for an annotation, keeping its author and contents together.
+/// Replies, popup containers and Fill & Sign marks have no standalone hover comment.
 fn annotation_hover_text(a: &pdfcraft_render::Annotation) -> Option<String> {
-    if a.is_reply() || a.fill_sign {
+    if a.is_reply() || a.fill_sign || a.subtype == "Popup" {
         return None;
     }
     let who = a.author.clone().unwrap_or_else(|| a.subtype.clone());
     let body = a.contents.clone().unwrap_or_default();
-    if is_text_markup(&a.subtype) && !body.trim().is_empty() {
-        Some(body)
-    } else if body.is_empty() {
-        Some(who)
-    } else {
-        Some(format!("{who}\n{body}"))
-    }
-}
-
-fn is_text_markup(subtype: &str) -> bool {
-    matches!(subtype, "Highlight" | "Underline" | "StrikeOut" | "Squiggly")
+    if body.is_empty() { Some(who) } else { Some(format!("{who}\n{body}")) }
 }
 
 /// The scroll offset that puts `point` (content coordinates) at `rel` in the viewport, kept within
@@ -3920,17 +3910,22 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
                 // freehand, where it would cover the next stroke (#429).
                 let freehand = matches!(tool, QuickTool::Comment(comments::CommentTool::Ink | comments::CommentTool::Eraser));
                 let gesturing = view.comments.gesture.is_some() || freehand;
-                for a in info.annotations.iter().filter(|a| a.page == i && !gesturing) {
-                    let sr = xf.user_rect(info, i, a.rect);
-                    let marker = pcx.comment_marker_rect(a);
-                    let hidden = prefs.hide_empty_highlight_hover && a.subtype == "Highlight" && a.contents.as_deref().is_none_or(str::is_empty);
-                    if (sr.contains(p) || marker.is_some_and(|r| r.contains(p)))
-                        && hover_text.is_none()
-                        && !hidden
-                        && let Some(text) = annotation_hover_text(a)
-                    {
-                        hover_text = Some((p, text));
-                    }
+                // Inspection sorts spatially; /Annots index determines the topmost paint.
+                // Use each marked line rather than the enclosing rectangle, including markers.
+                if hover_text.is_none()
+                    && !gesturing
+                    && let Some((_, text)) = info
+                        .annotations
+                        .iter()
+                        .filter(|a| a.page == i)
+                        .filter(|a| {
+                            !(prefs.hide_empty_highlight_hover && a.subtype == "Highlight" && a.contents.as_deref().is_none_or(str::is_empty))
+                        })
+                        .filter(|a| pcx.screen_rects(a).any(|r| r.contains(p)) || pcx.comment_marker_rect(a).is_some_and(|r| r.contains(p)))
+                        .filter_map(|a| annotation_hover_text(a).map(|text| (a.index, text)))
+                        .max_by_key(|(index, _)| *index)
+                {
+                    hover_text = Some((p, text));
                 }
             }
             for (mp, mr, mc) in &view.compare_marks {
@@ -5909,6 +5904,18 @@ mod tests {
     fn hover_popup_skips_fill_and_sign_marks() {
         assert_eq!(annotation_hover_text(&annotation(false)).as_deref(), Some("FreeText\nHello"));
         assert_eq!(annotation_hover_text(&annotation(true)), None);
+    }
+
+    #[test]
+    fn markup_hover_keeps_the_author_like_other_comments() {
+        for subtype in ["Highlight", "Underline", "StrikeOut", "Squiggly", "Text", "FreeText"] {
+            let mut a = annotation(false);
+            a.subtype = subtype.into();
+            a.author = Some("Ada".into());
+            assert_eq!(annotation_hover_text(&a).as_deref(), Some("Ada\nHello"), "{subtype}");
+            a.contents = None;
+            assert_eq!(annotation_hover_text(&a).as_deref(), Some("Ada"), "{subtype}");
+        }
     }
 
     fn signature(signed: bool, visible: bool, page: Option<usize>, rect: Option<[f64; 4]>) -> pdfcraft_engine::SignatureInfo {

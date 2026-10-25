@@ -635,7 +635,7 @@ impl PageCx<'_> {
         self.xf.user_rect(self.info, self.page, a.shown_rect(self.rotation()))
     }
 
-    /// Top-level comments on this page, in paint order.
+    /// Top-level comments on this page, in inspection order.
     fn comments(&self) -> impl Iterator<Item = &Annotation> {
         self.info.annotations.iter().filter(move |a| !self.hidden && a.page == self.page && a.is_comment() && a.subtype != "Popup")
     }
@@ -656,12 +656,21 @@ impl PageCx<'_> {
             .chain(fallback)
     }
 
+    /// A viewer-only marker for commented text markup intersecting the page.
     pub(crate) fn comment_marker_rect(&self, a: &Annotation) -> Option<Rect> {
         if !is_markup(&a.subtype) || a.contents.as_deref().is_none_or(|s| s.trim().is_empty()) {
             return None;
         }
         let r = self.screen_rects(a).last()?;
-        Some(Rect::from_min_size(pos2(r.right() + 3.0, r.top() - 14.0), vec2(12.0, 12.0)))
+        let size = vec2(12.0, 12.0);
+        let page = self.xf.rect;
+        let desired = pos2(r.right() + 3.0, r.top() - 14.0);
+        // Keep the fixed-size marker visible at page edges. At extremely small zooms,
+        // omit it rather than covering a page that is smaller than the marker itself.
+        if !page.is_finite() || !r.is_finite() || !desired.is_finite() || !page.intersects(r) || page.width() < size.x || page.height() < size.y {
+            return None;
+        }
+        Some(Rect::from_min_size(desired.clamp(page.min, page.max - size), size))
     }
 
     /// A redaction mark's areas: one per marked quad, or its rectangle.
@@ -687,7 +696,7 @@ impl PageCx<'_> {
             .filter(|a| {
                 self.screen_rects(a).any(|r| r.expand(3.0).contains(p)) || self.comment_marker_rect(a).is_some_and(|r| r.expand(3.0).contains(p))
             })
-            .last()
+            .max_by_key(|a| a.index)
     }
 
     pub(crate) fn get(&self, index: usize) -> Option<&Annotation> {
@@ -1337,9 +1346,9 @@ pub(crate) fn page_after_text(resp: &egui::Response, cx: &PageCx<'_>, view: &mut
 /// Paint comment selection, hover and gesture previews on a page.
 pub(crate) fn paint_page(ui: &egui::Ui, painter: &egui::Painter, cx: &PageCx<'_>, view: &DocView) {
     let cv = &view.comments;
-    // A highlighted comment keeps the text anchor in its quads. Add a small
-    // viewer-only marker so it is distinguishable from a plain highlight.
-    for a in cx.comments().filter(|a| is_markup(&a.subtype) && a.contents.as_deref().is_some_and(|s| !s.trim().is_empty())) {
+    // All commented text markup, including imported markup, gets a viewer-only
+    // marker. Plain markup has none; comment_marker_rect owns that distinction.
+    for a in cx.comments() {
         if let Some(marker) = cx.comment_marker_rect(a)
             && let Some(target) = cx.screen_rects(a).last()
         {
@@ -1630,7 +1639,8 @@ pub(crate) fn composer(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, 
     let mut cancel = false;
     let c = view.comments.composer.as_mut()?;
     let title = match c.kind {
-        ComposerKind::Note | ComposerKind::TextNote { .. } => "Sticky note",
+        ComposerKind::Note => "Sticky note",
+        ComposerKind::TextNote { .. } => "Add comment",
         ComposerKind::TextBox { .. } => "Text box",
         ComposerKind::Callout { .. } => "Callout",
         ComposerKind::Caret { .. } => "Inserted text",
@@ -2317,6 +2327,72 @@ pub fn status_badge(state: &str) -> Option<(&'static str, &'static str, Color32)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn markup_comment_markers_stay_inside_turned_and_zoomed_pages() {
+        let prefs = CommentPrefs::default();
+        for (page_rotation, rotation) in [(0, 0), (90, 0), (180, 0), (270, 0), (0, 90), (0, 180), (0, 270), (90, 270)] {
+            for zoom in [0.25, 1.0, 4.0] {
+                let (pw, ph) = if page_rotation % 180 == 0 { (300.0, 200.0) } else { (200.0, 300.0) };
+                let (w, h) = if rotation % 180 == 0 { (pw, ph) } else { (ph, pw) };
+                let xf = PageXform { rect: Rect::from_min_size(pos2(40.0, 60.0), vec2(w, h) * zoom), rot: rotation, pw, ph };
+                let info = DocInfo {
+                    pages: vec![PageInfo { width: pw, height: ph, label: String::new(), crop: [0.0, 0.0, 300.0, 200.0], rotation: page_rotation }],
+                    ..Default::default()
+                };
+                let cx = PageCx {
+                    page: 0,
+                    xf: &xf,
+                    ptr: &PagePointer::default(),
+                    info: &info,
+                    tool: QuickTool::Select,
+                    prefs: &prefs,
+                    allowed: true,
+                    hidden: false,
+                    redact_mark: ([0.0; 3], 1.0),
+                };
+                for rect in [[0.0, 180.0, 30.0, 200.0], [270.0, 180.0, 300.0, 200.0], [270.0, 0.0, 300.0, 20.0], [0.0, 0.0, 30.0, 20.0]] {
+                    let [x0, y0, x1, y1] = rect;
+                    let mut a = Annotation {
+                        page: 0,
+                        subtype: "Highlight".into(),
+                        author: Some("Ada".into()),
+                        contents: Some("Review".into()),
+                        modified: None,
+                        name: None,
+                        in_reply_to: None,
+                        parent: None,
+                        grouped: false,
+                        rect,
+                        color: None,
+                        index: 0,
+                        state: None,
+                        quads: vec![[x0, y1, x1, y1, x0, y0, x1, y0]],
+                        locked: false,
+                        intent: None,
+                        fill_sign: false,
+                        no_rotate: false,
+                        points: Vec::new(),
+                    };
+                    let marker = cx.comment_marker_rect(&a).expect("commented markup has a marker");
+                    assert!((marker.width() - 12.0).abs() < 0.001 && (marker.height() - 12.0).abs() < 0.001, "{marker:?}");
+                    assert!(xf.rect.contains_rect(marker), "page/view rotation {page_rotation}/{rotation}, zoom {zoom}, anchor {rect:?}: {marker:?}");
+                    let mut top = a.clone();
+                    top.index = 1;
+                    // Inspection order can differ from /Annots order. Picking the marker
+                    // must select the same topmost comment as hovering its marked text.
+                    let hit_info = DocInfo { annotations: vec![top, a.clone()], ..info.clone() };
+                    let hit_cx = PageCx { info: &hit_info, ..cx };
+                    assert_eq!(hit_cx.hit(marker.center()).map(|a| a.index), Some(1));
+                    a.contents = None;
+                    assert!(cx.comment_marker_rect(&a).is_none(), "plain markup has no marker");
+                    a.contents = Some("Review".into());
+                    a.quads = vec![[1000.0, 1010.0, 1010.0, 1010.0, 1000.0, 1000.0, 1010.0, 1000.0]];
+                    assert!(cx.comment_marker_rect(&a).is_none(), "off-page markup stays off the page");
+                }
+            }
+        }
+    }
 
     /// A selected line is drawn where it is going: moved by its body (both ends follow the
     /// pointer), with an end dragged (that end alone), and as released until the page is drawn.
